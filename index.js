@@ -10,45 +10,29 @@ const requestLogger = (request, response, next) => {
 }
 
 const app = express()
+app.use(express.static('build'))
 app.use(express.json())
 app.use(cors())
 app.use(requestLogger)
 
-
-let persons = [
-    { 
-      "id": 1,
-      "name": "Arto Hellas", 
-      "number": "040-123456"
-    },
-    { 
-      "id": 2,
-      "name": "Ada Lovelace", 
-      "number": "39-44-5323523"
-    },
-    { 
-      "id": 3,
-      "name": "Dan Abramov", 
-      "number": "12-43-234345"
-    },
-    { 
-      "id": 4,
-      "name": "Mary Poppendieck", 
-      "number": "39-23-6423122"
-    }
-]
+const Person = require('./models/person')
 
 app.get('/', (request, response) => {
     response.send('<h1>Hello World!</h1>')
 })
 
 app.get('/api/persons', (request, response) => {
-    response.json(persons)
+    // response.json(persons)
+    Person.find({})
+    .then(persons => {
+        response.json(persons)
+        // mongoose.connection.close()
+    })
 })
 
-app.get('/info', (request, response) => {
+app.get('/info', async (request, response) => {
     var currentdate = new Date(); 
-    const phonebookSize = persons.length
+    const phonebookSize = await Person.countDocuments()
     let htmlResponse = `<div>Phonebook has info for ${phonebookSize} people</div>`
     
     var datetime = "Request received on: " + currentdate.getDate() + "/"
@@ -62,46 +46,62 @@ app.get('/info', (request, response) => {
     response.send(htmlResponse)
 })
 
-app.get('/api/persons/:id', (request, response) => {
-    const id = Number(request.params.id)
-    const person = persons.find(person => person.id === id)
-    
-    if (person) {
-        response.json(person)
-    } else {
-        // response.statusMessage();
-        response.status(404).send("The supplied ID does not exist")
-    }
+app.get('/api/persons/:id', (request, response, next) => {
+    Person.findById(request.params.id)
+    .then(person => {
+        if (person) {
+            response.json(person)
+        } else {
+            response.status(404).send("The supplied ID does not exist")
+        }
+    })
+    .catch(error => next(error))
 })
 
 app.delete('/api/persons/:id', (request, response) => {
-    const id = Number(request.params.id)
-    persons = persons.filter(person => person.id !== id)
+    Person.findByIdAndRemove(request.params.id)
+    .then(result => {
+        console.log(result)
+        response.status(204).end()
+    })
+    .catch(error => next(error))
+})
 
-    response.status(204).end()
+app.put('/api/persons/:id', (request, response) => {
+    const body = request.body
+
+    const person = {
+        name: body.name,
+        number: body.number
+    }
+
+    Person.findByIdAndUpdate(request.params.id, person, {new:true})
+    .then(updatedPerson => {
+        response.json(updatedPerson)
+    })
+    .catch(error => next(error))
 })
 
 app.post('/api/persons', (request, response) => {
     
     const body = request.body
-    // console.log(`request ${body}`)
+    console.log(`name: ${body.name}, number: ${body.number}`)
     if(!body.name || !body.number) {
         return response.status(400).json({
             error: 'name or number missing'
         })
-    } else if(persons.some(p => p.name === body.name)) {
-        return response.status(400).json({
-            error: 'name must be unique'
-        })
     }
 
-    const person = {
+    const person = new Person({
         name: body.name,
-        number: body.number,
-        id: generateId()
-    }
-
-    persons = persons.concat(person)
+        number: body.number
+    })
+    console.log('new person', person.name, person.number)
+    // persons = persons.concat(person)
+    person.save().then(result => {
+        console.log('person saved!')
+        // mongoose.connection.close()
+    })
 
     // console.log(request.headers)
     // console.log(person)
@@ -114,9 +114,18 @@ const unknownEndpoint = (request, response) => {
   
 app.use(unknownEndpoint)
 
-const generateId = () => {
-    return Math.floor(Math.random() * 999999999)
+const errorHandler = (error, request, response, next) => {
+    console.error(error.message)
+
+    if(error.name === 'CastError') {
+        return response.status(400).send({error: 'malformatted id'})
+    }
+
+    next(error)
 }
+
+// has to be the last loaded middleware
+app.use(errorHandler)
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT)
